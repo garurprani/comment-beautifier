@@ -1,7 +1,7 @@
 <body>
 
 <!-- Option A: use repo image (recommended). Place logo at ./assets/logo.png -->
-<img src="./assets/logo.png" alt="Comment Beautifier logo" width="200" />
+<img src="./assets/logo.png" alt="Comment Beautifier logo" width="100" />
 
 <!-- Option B: or use your WordPress-hosted image (uncomment and replace the URL)
 <img src="https://your-site.com/wp-content/uploads/2025/11/logo.png" alt="Comment Beautifier logo" width="200" />
