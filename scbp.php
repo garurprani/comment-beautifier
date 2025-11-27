@@ -1,11 +1,17 @@
 <?php
-/*
-Plugin Name: Comment Beautifier
-Description: Convert spammy comments to friendlier, cleaned-up comments with an enhanced UI. Beautiful card layout, intuitive controls, and powerful filtering.
-Version: 2.1
-Author: Ujjwal Raj
-Text Domain: comment-beautifier
-*/
+/**
+ * Plugin Name: Comment Beautifier
+ * Plugin URI: https://github.com/garurprani/comment-beautifier
+ * Description: Convert spammy comments to friendlier, cleaned-up comments with an enhanced UI.
+ * Version: 2.2
+ * Author: Ujjwal Raj
+ * Author URI: https://github.com/garurprani
+ * Text Domain: comment-beautifier
+ * License: GPLv2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Requires at least: 5.0
+ * Requires PHP: 7.4
+ */
 
 if (!defined('ABSPATH')) exit;
 
@@ -23,6 +29,7 @@ class Comment_Beautifier_Pro {
         }
         return self::$instance;
     }
+    
 
     private function __construct() {
         add_action('admin_menu', array($this, 'register_admin_page'));
@@ -33,6 +40,25 @@ class Comment_Beautifier_Pro {
         add_action('wp_ajax_cb_remove_profile_urls', array($this, 'remove_author_urls'));
         add_action('wp_ajax_cb_unapprove_comments', array($this, 'ajax_unapprove_comments'));
         add_action('wp_ajax_cb_remove_urls_only', array($this, 'ajax_remove_urls_only'));
+        
+        // Add comment meta for tracking
+        add_action('init', array($this, 'register_comment_meta'));
+    }
+
+    public function register_comment_meta() {
+        register_meta('comment', '_cb_backup_content', array(
+            'type' => 'string',
+            'description' => 'Original comment content before beautification',
+            'single' => true,
+            'show_in_rest' => false,
+        ));
+        
+        register_meta('comment', '_cb_backup_author', array(
+            'type' => 'string',
+            'description' => 'Original comment author before beautification',
+            'single' => true,
+            'show_in_rest' => false,
+        ));
     }
 
     public function register_admin_page() {
@@ -102,10 +128,10 @@ class Comment_Beautifier_Pro {
     
         $plugin_url = plugin_dir_url(__FILE__);
     
-        wp_register_style('scbp-admin-css', $plugin_url . 'css/style.css', array(), '2.1');
+        wp_register_style('scbp-admin-css', $plugin_url . 'css/style.css', array(), '2.2');
         wp_enqueue_style('scbp-admin-css');
     
-        wp_register_script('scbp-admin-js', $plugin_url . 'js/scb.js', array('jquery'), '2.1', true);
+        wp_register_script('scbp-admin-js', $plugin_url . 'js/scb.js', array('jquery'), '2.2', true);
         wp_enqueue_script('scbp-admin-js');
     
         wp_localize_script('scbp-admin-js', 'cb_ajax', array(
@@ -129,8 +155,165 @@ class Comment_Beautifier_Pro {
         } else {
             return '';
         }
-        $parts = parse_url($u);
+        $parts = wp_parse_url($u);
         return isset($parts['host']) ? $parts['host'] : '';
+    }
+
+    /**
+     * Get comments without backup meta (non-beautified) - Optimized version
+     */
+    private function get_comments_without_backup($number, $offset = 0) {
+        $cache_key = 'cb_comments_without_backup_' . $number . '_' . $offset;
+        $cached = wp_cache_get($cache_key, 'comment-beautifier');
+        
+        if ($cached !== false) {
+            return $cached;
+        }
+
+        // Get all pending comments first
+        $all_comments = get_comments(array(
+            'status' => 'hold',
+            'number' => $number * 2, // Get more to account for filtering
+            'offset' => $offset,
+            'orderby' => 'comment_date',
+            'order' => 'DESC',
+        ));
+
+        // Filter out comments that have backup meta
+        $filtered_comments = array();
+        foreach ($all_comments as $comment) {
+            if (count($filtered_comments) >= $number) {
+                break;
+            }
+            if (!metadata_exists('comment', $comment->comment_ID, '_cb_backup_content')) {
+                $filtered_comments[] = $comment;
+            }
+        }
+
+        wp_cache_set($cache_key, $filtered_comments, 'comment-beautifier', 300);
+        return $filtered_comments;
+    }
+
+    /**
+     * Count comments without backup meta (non-beautified) - Optimized version
+     */
+    private function count_comments_without_backup() {
+        $cache_key = 'cb_count_comments_without_backup';
+        $cached = wp_cache_get($cache_key, 'comment-beautifier');
+        
+        if ($cached !== false) {
+            return $cached;
+        }
+    
+        // Get total pending comments
+        $total_pending = (int) get_comments(array(
+            'status' => 'hold',
+            'count' => true,
+        ));
+    
+        // Get count of beautified comments by sampling
+        $sample_comments = get_comments(array(
+            'status' => 'hold',
+            'number' => min(200, $total_pending), // Sample size
+        ));
+    
+        $beautified_count = 0;
+        foreach ($sample_comments as $comment) {
+            if (metadata_exists('comment', $comment->comment_ID, '_cb_backup_content')) {
+                $beautified_count++;
+            }
+        }
+    
+        // Estimate total beautified count based on sample ratio
+        $sample_ratio = $total_pending > 0 ? count($sample_comments) / $total_pending : 0;
+        $estimated_beautified = $sample_ratio > 0 ? $beautified_count / $sample_ratio : 0;
+        
+        $count = max(0, $total_pending - (int) $estimated_beautified);
+        wp_cache_set($cache_key, $count, 'comment-beautifier', 300);
+        
+        return $count;
+    }
+
+    /**
+     * Get comments with backup meta (beautified) - Optimized version
+     */
+    private function get_comments_with_backup($number, $offset = 0) {
+        $cache_key = 'cb_comments_with_backup_' . $number . '_' . $offset;
+        $cached = wp_cache_get($cache_key, 'comment-beautifier');
+
+        if ($cached !== false) {
+            return $cached;
+        }
+
+        // Get all pending comments and filter for those with backup meta
+        $all_comments = get_comments(array(
+            'status' => 'hold',
+            'number' => $number * 3, // Get more to account for filtering
+            'offset' => $offset,
+            'orderby' => 'comment_date',
+            'order' => 'DESC',
+        ));
+
+        $filtered_comments = array();
+        foreach ($all_comments as $comment) {
+            if (count($filtered_comments) >= $number) {
+                break;
+            }
+            if (metadata_exists('comment', $comment->comment_ID, '_cb_backup_content')) {
+                $filtered_comments[] = $comment;
+            }
+        }
+
+        wp_cache_set($cache_key, $filtered_comments, 'comment-beautifier', 300);
+        return $filtered_comments;
+    }
+
+    /**
+     * Count comments with backup meta (beautified) - Optimized version
+     */
+    private function count_comments_with_backup() {
+        $cache_key = 'cb_count_comments_with_backup';
+        $cached = wp_cache_get($cache_key, 'comment-beautifier');
+
+        if ($cached !== false) {
+            return $cached;
+        }
+
+        // Get all pending comments and count how many have backup meta
+        $all_comments = get_comments(array(
+            'status' => 'hold',
+            'number' => 1000, // Reasonable limit for counting
+        ));
+
+        $count = 0;
+        foreach ($all_comments as $comment) {
+            if (metadata_exists('comment', $comment->comment_ID, '_cb_backup_content')) {
+                $count++;
+            }
+        }
+
+        wp_cache_set($cache_key, $count, 'comment-beautifier', 300);
+        return $count;
+    }
+
+    /**
+     * Clear comments cache when comments are modified
+     */
+    private function clear_comments_cache() {
+        $cache_keys = array(
+            'cb_comments_without_backup',
+            'cb_count_comments_without_backup',
+            'cb_comments_with_backup',
+            'cb_count_comments_with_backup'
+        );
+        
+        foreach ($cache_keys as $base_key) {
+            wp_cache_delete($base_key, 'comment-beautifier');
+            // Also delete paginated cache entries
+            for ($i = 0; $i < 10; $i++) {
+                wp_cache_delete($base_key . '_' . ($i * 20) . '_' . $i, 'comment-beautifier');
+            }
+        }
     }
 
     /**
@@ -138,40 +321,23 @@ class Comment_Beautifier_Pro {
      */
     public function render_overview_page() {
         if (!current_user_can('manage_options')) wp_die('Unauthorized');
-        
+
+        // Verify nonce for form processing
+        if (isset($_GET['cb_page'])) {
+            $nonce = isset($_GET['_wpnonce']) ? sanitize_text_field(wp_unslash($_GET['_wpnonce'])) : '';
+            if (!wp_verify_nonce($nonce, 'cb_pagination_nonce')) {
+                wp_die('Security check failed');
+            }
+        }
+
         $current_page = isset($_GET['cb_page']) ? max(1, intval($_GET['cb_page'])) : 1;
         $comments_per_page = get_option($this->option_comments_per_page_key, 20);
         $offset = ($current_page - 1) * $comments_per_page;
-    
+
         // Get comments for overview page - EXCLUDE already beautified comments
-        $all_comments_args = array(
-            'number' => $comments_per_page,
-            'offset' => $offset,
-            'status' => 'hold',
-            'order' => 'DESC',
-            'meta_query' => array(
-                array(
-                    'key' => '_cb_backup_content',
-                    'compare' => 'NOT EXISTS' // Only show non-beautified comments
-                )
-            )
-        );
-        
-        $all_comments = get_comments($all_comments_args);
-        
-        // Get total count for pagination - also exclude beautified comments
-        $total_args = array(
-            'status' => 'hold',
-            'count' => true,
-            'meta_query' => array(
-                array(
-                    'key' => '_cb_backup_content',
-                    'compare' => 'NOT EXISTS'
-                )
-            )
-        );
-        $total_comments = get_comments($total_args);
-        
+        $all_comments = $this->get_comments_without_backup($comments_per_page, $offset);
+        $total_comments = $this->count_comments_without_backup();
+
         $this->render_page_header('Overview');
         $this->render_comments_section($all_comments, 'overview', $current_page, $comments_per_page, $total_comments);
         $this->render_page_footer();
@@ -183,27 +349,25 @@ class Comment_Beautifier_Pro {
     public function render_awaiting_page() {
         if (!current_user_can('manage_options')) wp_die('Unauthorized');
         
+        // Verify nonce for form processing
+        if (isset($_GET['cb_page'])) {
+            $nonce = isset($_GET['_wpnonce']) ? sanitize_text_field(wp_unslash($_GET['_wpnonce'])) : '';
+            if (!wp_verify_nonce($nonce, 'cb_pagination_nonce')) {
+                wp_die('Security check failed');
+            }
+        }
+
         $current_page = isset($_GET['cb_page']) ? max(1, intval($_GET['cb_page'])) : 1;
         $comments_per_page = get_option($this->option_comments_per_page_key, 20);
         $offset = ($current_page - 1) * $comments_per_page;
 
-        $awaiting_comments = get_comments(array(
-            'number' => $comments_per_page,
-            'offset' => $offset,
-            'status' => 'hold',
-            'order' => 'DESC',
-            'meta_query' => array(
-                array(
-                    'key' => '_cb_backup_content',
-                    'compare' => 'EXISTS'
-                )
-            )
-        ));
+        $awaiting_comments = $this->get_comments_with_backup($comments_per_page, $offset);
+        $total_comments = $this->count_comments_with_backup();
 
         $totals = wp_count_comments();
         
         $this->render_page_header('Awaiting Moderation');
-        $this->render_comments_section($awaiting_comments, 'awaiting', $current_page, $comments_per_page, $totals->moderated);
+        $this->render_comments_section($awaiting_comments, 'awaiting', $current_page, $comments_per_page, $total_comments);
         $this->render_page_footer();
     }
 
@@ -351,7 +515,7 @@ class Comment_Beautifier_Pro {
         $this->render_page_footer();
     }
 
-        /**
+    /**
      * About/Developer page
      */
     public function render_about_page() {
@@ -365,7 +529,7 @@ class Comment_Beautifier_Pro {
                     <!-- <span class="cb-pro-about-logo">💬</span> -->
                     <div class="cb-pro-about-title">
                         <h2>Comment Beautifier</h2>
-                        <p class="cb-pro-version">Version 2.1</p>
+                        <p class="cb-pro-version">Version 2.2</p>
                     </div>
                 </div>
                 <p class="cb-pro-about-description">
@@ -459,7 +623,7 @@ class Comment_Beautifier_Pro {
                         <li>Screenshots (if possible)</li>
                         <li>Your WordPress version</li>
                         <li>PHP version</li>
-                        <li>Plugin version (v2.1)</li>
+                        <li>Plugin version (v2.2)</li>
                     </ul>
                 </div>
             </div>
@@ -480,17 +644,7 @@ private function render_page_header($page_title = '') {
     
     if (!$is_about_page && !$is_settings_page) {
         $totals = wp_count_comments();
-        $beautified_count_args = array(
-            'status' => 'hold',
-            'count' => true,
-            'meta_query' => array(
-                array(
-                    'key' => '_cb_backup_content',
-                    'compare' => 'EXISTS'
-                )
-            )
-        );
-        $beautified_count = get_comments($beautified_count_args);
+        $beautified_count = $this->count_comments_with_backup();
     }
     ?>
     <div class="wrap cb-pro-wrap">
@@ -565,7 +719,7 @@ private function render_page_header($page_title = '') {
                     <span class="cb-pro-footer-logo">💬</span>
                     <div class="cb-pro-footer-title">
                         <strong>Comment Beautifier</strong>
-                        <span>v2.1 • By Ujjwal Raj aka garurprani</span>
+                        <span>v2.2 • By Ujjwal Raj aka garurprani</span>
                     </div>
                 </div>
                 
@@ -585,8 +739,8 @@ private function render_page_header($page_title = '') {
             </div>
             
             <div class="cb-pro-footer-bottom">
-                <span>Transform spammy comments into friendly conversations</span>
-                <span>&copy; <?php echo date('Y'); ?> Comment Beautifier</span>
+                <span><?php echo esc_html__('Transform spammy comments into friendly conversations', 'comment-beautifier'); ?></span>
+                <span>&copy; <?php echo esc_html(gmdate('Y')); ?> Comment Beautifier</span>
             </div>
         </div>
         </div><!-- .wrap -->
@@ -685,7 +839,7 @@ private function render_page_header($page_title = '') {
                 echo '<div class="cb-pro-empty-state">
                         <span class="dashicons dashicons-admin-comments"></span>
                         <h3>No comments found</h3>
-                        <p>' . $message . '</p>
+                        <p>' . esc_html($message) . '</p>
                       </div>';
             } else {
                 foreach ($comments as $c) :
@@ -697,7 +851,7 @@ private function render_page_header($page_title = '') {
                     $post_title = get_the_title($c->comment_post_ID);
                     $profile_domain = '';
                     if ($has_profile) {
-                        $p = parse_url($c->comment_author_url);
+                        $p = wp_parse_url($c->comment_author_url);
                         $profile_domain = isset($p['host']) ? $p['host'] : preg_replace('#https?://#i','', rtrim($c->comment_author_url,'/'));
                     }
                     $comment_link_domain = $this->get_domain_from_text($c->comment_content);
@@ -809,24 +963,29 @@ private function render_page_header($page_title = '') {
         <?php if ($total_pages > 1): ?>
         <div class="cb-pro-pagination">
             <div class="cb-pro-pagination-info">
-                Page <?php echo $current_page; ?> of <?php echo $total_pages; ?>
+                <?php 
+                printf(
+                    /* translators: 1: current page number, 2: total number of pages */
+                    esc_html__('Page %1$s of %2$s', 'comment-beautifier'), 
+                    esc_html((string)$current_page), 
+                    esc_html((string)$total_pages)
+                ); 
+                ?>
             </div>
             <div class="cb-pro-pagination-controls">
                 <?php if ($current_page > 1): ?>
-                    <a href="<?php echo add_query_arg('cb_page', $current_page - 1); ?>" class="cb-pro-btn secondary">
+                    <a href="<?php echo esc_url(add_query_arg(array('cb_page' => $current_page - 1, '_wpnonce' => wp_create_nonce('cb_pagination_nonce')))); ?>" class="cb-pro-btn secondary">
                         <span class="dashicons dashicons-arrow-left-alt2"></span>
-                        Previous
+                        <?php esc_html_e('Previous', 'comment-beautifier'); ?>
                     </a>
                 <?php endif; ?>
 
-                // TODO: maybe improve this regex later
-                // FIXME: check if this works with special characters
-                // thinking to add ai feature using gemini api send article genereate a relatable 5-10 comment then use them.
-                
-                
                 <?php if ($current_page < $total_pages): ?>
-                    <a href="<?php echo add_query_arg('cb_page', $current_page + 1); ?>" class="cb-pro-btn secondary">
-                        Next
+                    <a href="<?php echo esc_url(add_query_arg(array('cb_page' => $current_page + 1, '_wpnonce' => wp_create_nonce('cb_pagination_nonce')))); ?>" class="cb-pro-btn secondary">
+                        <?php 
+                        /* translators: Next page button text */
+                        esc_html_e('Next', 'comment-beautifier'); 
+                        ?>
                         <span class="dashicons dashicons-arrow-right-alt2"></span>
                     </a>
                 <?php endif; ?>
@@ -841,14 +1000,14 @@ private function render_page_header($page_title = '') {
         check_ajax_referer('cb_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized', 403);      
 
-        $comments_raw = isset($_POST['comments']) ? wp_unslash($_POST['comments']) : '';
-        $names_raw = isset($_POST['names']) ? wp_unslash($_POST['names']) : '';
+        $comments_raw = isset($_POST['comments']) ? sanitize_textarea_field(wp_unslash($_POST['comments'])) : '';
+        $names_raw = isset($_POST['names']) ? sanitize_textarea_field(wp_unslash($_POST['names'])) : '';
         $comments_per_page = isset($_POST['comments_per_page']) ? intval($_POST['comments_per_page']) : 20;
-        $remove_urls = isset($_POST['remove_urls']) ? sanitize_text_field($_POST['remove_urls']) : '0';
-        $only_links = isset($_POST['only_links']) ? sanitize_text_field($_POST['only_links']) : '0';     
+        $remove_urls = isset($_POST['remove_urls']) ? sanitize_text_field(wp_unslash($_POST['remove_urls'])) : '0';
+        $only_links = isset($_POST['only_links']) ? sanitize_text_field(wp_unslash($_POST['only_links'])) : '0';     
 
-        update_option($this->option_comments_key, sanitize_textarea_field($comments_raw));
-        update_option($this->option_names_key, sanitize_textarea_field($names_raw));
+        update_option($this->option_comments_key, $comments_raw);
+        update_option($this->option_names_key, $names_raw);
         update_option($this->option_comments_per_page_key, $comments_per_page);
         update_option($this->option_remove_urls_key, $remove_urls);
         update_option($this->option_only_links_key, $only_links);     
@@ -871,7 +1030,7 @@ private function render_page_header($page_title = '') {
         
         $per_row_remove = array();
         if (!empty($_POST['per_row_remove'])) {
-            $decoded = json_decode(stripslashes($_POST['per_row_remove']), true);
+            $decoded = json_decode(sanitize_text_field(wp_unslash($_POST['per_row_remove'])), true);
             if (is_array($decoded)) {
                 foreach ($decoded as $k => $v) $per_row_remove[intval($k)] = intval($v);
             }
@@ -940,6 +1099,9 @@ private function render_page_header($page_title = '') {
             if ($result) $updated++;
         }
 
+        // Clear cache after modifications
+        $this->clear_comments_cache();
+
         wp_send_json_success(array('updated' => $updated));
     }
 
@@ -959,6 +1121,10 @@ private function render_page_header($page_title = '') {
             $r = wp_set_comment_status($id, 'approve');
             if ($r) $approved++;
         }
+
+        // Clear cache after modifications
+        $this->clear_comments_cache();
+
         wp_send_json_success(array('approved' => $approved));
     }
 
@@ -978,6 +1144,10 @@ private function render_page_header($page_title = '') {
             $r = wp_set_comment_status($id, 'hold');
             if ($r) $unapproved++;
         }
+
+        // Clear cache after modifications
+        $this->clear_comments_cache();
+
         wp_send_json_success(array('unapproved' => $unapproved));
     }
 
@@ -997,6 +1167,10 @@ private function render_page_header($page_title = '') {
             $r = wp_update_comment(array('comment_ID' => $id, 'comment_author_url' => ''));
             if ($r) $removed++;
         }
+
+        // Clear cache after modifications
+        $this->clear_comments_cache();
+
         wp_send_json_success(array('removed' => $removed));
     }
 
@@ -1028,6 +1202,10 @@ private function render_page_header($page_title = '') {
             $result = wp_update_comment($data);
             if ($result) $updated++;
         }
+
+        // Clear cache after modifications
+        $this->clear_comments_cache();
+
         wp_send_json_success(array('updated' => $updated));
     }
 
