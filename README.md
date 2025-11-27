@@ -11,7 +11,7 @@
 
 <p>Comment Beautifier helps you clean up spammy comments in bulk. It detects comments with links or spam-style text and lets you fix them with simple actions like Beautify, Remove Links, or Approve.</p>
 
-<h2>What This Tool Does</h2>
+<h2>What This Plugin Does</h2>
 <ul>
   <li>Detects comments that contain URLs or spam-style content.</li>
   <li>Removes or replaces unwanted links.</li>
@@ -29,7 +29,7 @@
   <li>The script sends the request to the backend and updates the comments instantly.</li>
 </ol>
 
-<h2>Files in This Tool</h2>
+<h2>Files in This Plugin</h2>
 <ul>
   <li><strong>scb.js</strong> – Controls UI, selections, previews, and AJAX requests.</li>
   <li><strong>scbp.php</strong> – Receives requests and updates comments on the server.</li>
@@ -86,7 +86,7 @@
 
 <h2>License</h2>
 <pre><code>MIT License
-Copyright (c) [year] [author]
+Copyright (c) 2025 Ujjwal Raj
 Permission is hereby granted...
 </code></pre>
 
