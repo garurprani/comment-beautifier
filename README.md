@@ -90,7 +90,4 @@ Copyright (c) 2025 Ujjwal Raj
 Permission is hereby granted...
 </code></pre>
 
-<h2>Contact</h2>
-<p>Add your support contact or project URL here.</p>
-
 </body>
