@@ -85,7 +85,8 @@
 </ul>
 
 <h2>License</h2>
-<pre><code>MIT License
+<pre><code>
+License GNU Affero General Public License v3.0
 Copyright (c) 2025 Ujjwal Raj
 Permission is hereby granted...
 </code></pre>
