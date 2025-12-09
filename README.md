@@ -11,6 +11,9 @@
 
 <p>Comment Beautifier helps you clean up spammy comments in bulk. It detects comments with links or spam-style text and lets you fix them with simple actions like Beautify, Remove Links, or Approve.</p>
 
+<h2>Get it on wordpress</h2>
+https://wordpress.org/plugins/comment-beautifier/
+
 <h2>What This Plugin Does</h2>
 <ul>
   <li>Detects comments that contain URLs or spam-style content.</li>
